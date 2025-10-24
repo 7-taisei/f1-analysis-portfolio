@@ -48,41 +48,49 @@ else:
         index=race_names_list.index(default_race_name)
     )
     
-    # 'RoundNumber' を取得
     selected_round = schedule_df.loc[schedule_df['OfficialEventName'] == selected_race, 'RoundNumber'].iloc[0]
 
 
-# 3. ★★★ 修正 ★★★ セッションの動的取得 (型変換を追加)
+# 3. ★★★ 最終修正 ★★★ セッションの動的取得
 @st.cache_data
 def get_event_sessions(year, round_number):
-    # (selected_roundがNoneの場合のガード)
-    if not round_number:
+    if round_number is None:
         return []
     
-    # ★★★ ここが最重要修正点 ★★★
-    # Pandasから渡された 'round_number' (numpy.int64など) を
-    # Pythonネイティブの 'int' に変換する
     try:
         rn_int = int(round_number)
     except (ValueError, TypeError):
         st.sidebar.error(f"ラウンド番号 '{round_number}' を数値に変換できません。")
         return []
         
-    # --- ここから下は前回と同じ ---
     try:
-        # 変換した 'rn_int' を使用する
         event = ff1.get_event(year, rn_int) 
-        sessions = list(event.keys())
         
+        # ★★★ ここが新しいロジック ★★★
+        # 'Session1'～'Session5' のキーをループし、その「値」（セッション名）を取得する
+        session_keys = ['Session1', 'Session2', 'Session3', 'Session4', 'Session5']
+        sessions_from_event = []
+        for key in session_keys:
+            # event[key] は 'Practice 1' などのセッション名を返す
+            session_name = event[key] 
+            if session_name: # (セッションが存在する場合)
+                sessions_from_event.append(session_name)
+        
+        # 取得したセッション名を定義済みの順序でソートする
         session_order = {
             'Practice 1': 1, 'Practice 2': 2, 'Practice 3': 3,
             'Sprint Shootout': 4, 'Qualifying': 5,
-            'Sprint': 6, 'Race': 7
+            'Sprint': 6, 'Race': 7,
+            # (短縮名も念のため残す)
+            'FP1': 1, 'FP2': 2, 'FP3': 3, 
+            'SQ': 4, 'Q': 5, 'S': 6, 'R': 7 
         }
+        
         sessions_sorted = sorted(
-            [s for s in sessions if s in session_order],
+            [s for s in sessions_from_event if s in session_order],
             key=lambda s: session_order[s]
         )
+        
         return sessions_sorted
 
     except Exception as e:
@@ -109,6 +117,7 @@ def load_session_data(year, race_name, session_name):
     if not all([year, race_name, session_name]):
         return None
     try:
+        # get_session は 'OfficialEventName' (race_name) でも 'Practice 1' (session_name) でも動作する
         session = ff1.get_session(year, race_name, session_name)
         session.load(laps=True, telemetry=False, weather=False, messages=False)
         laps = session.laps
@@ -133,7 +142,8 @@ else:
 
     # --- 分析ロジックの分岐 ---
     
-    if selected_session in ['Race', 'Sprint']:
+    # セッション名が 'Race' または 'Sprint' の場合
+    if selected_session in ['Race', 'Sprint', 'S', 'R']:
         laps_cleaned = laps.pick_accurate() 
         if laps_cleaned.empty:
             st.warning("分析可能なクリーンラップデータがありません。")
@@ -167,7 +177,8 @@ else:
                                     xaxis_title="Tyre Life (Laps)", yaxis_title="Lap Time (Seconds)")
                 st.plotly_chart(fig_tyre, use_container_width=True)
 
-    else: # 予選・練習走行
+    # 予選・練習走行、またはその他のセッションの場合
+    else: 
         st.info("予選・練習走行セッションです。全ドライバーの最速ラップを表示します。")
         
         try:
@@ -177,8 +188,10 @@ else:
             st.dataframe(fastest_laps_summary.set_index('Driver').sort_values('LapTime'), use_container_width=True)
             
             st.subheader("Fastest Lap Tyre Compound Distribution")
+            
             fig_pie = px.pie(fastest_laps_summary, names='Compound', 
-                             color_compound_map=TYRE_COLORS, # (修正: color_discrete_map -> color_compound_map)
+                             color='Compound',
+                             color_discrete_map=TYRE_COLORS,
                              title="Tyre Compounds used for Fastest Laps")
             st.plotly_chart(fig_pie, use_container_width=True)
 
