@@ -8,7 +8,7 @@ st.set_page_config(layout="wide")
 
 # --- タイヤ色の定義 ---
 TYRE_COLORS = {
-    'SOFT': '#dc143c', 'MEDIUM': '#ffd700', 'HARD': '#f8f8ff',
+    'SOFT': '#dc143c', 'MEDIUM': '#ffd700', 'HARD': "#7eacc7",
     'INTERMEDIATE': '#4CAF50', 'WET': '#0D47A1'
 }
 
@@ -22,26 +22,23 @@ st.sidebar.header("Filter Options ⚙️")
 supported_years = [2024, 2023, 2022]
 selected_year = st.sidebar.selectbox("Select Year:", supported_years)
 
-# 2. ★★★ 修正 ★★★ レーススケジュールの動的取得 (DataFrameを返す)
+# 2. レーススケジュールの動的取得 (DataFrameを返す)
 @st.cache_data
 def get_race_schedule(year):
     try:
         schedule = ff1.get_event_schedule(year, include_testing=False)
-        # DataFrame全体を返す
         return schedule
     except Exception as e:
         st.sidebar.error(f"Error fetching {year} schedule: {e}")
-        return pd.DataFrame() # 空のDataFrameを返す
+        return pd.DataFrame()
 
-# スケジュール(DataFrame)を取得
 schedule_df = get_race_schedule(selected_year)
 
 if schedule_df.empty:
     st.sidebar.error(f"{selected_year}年のレースデータが見つかりません。")
     selected_race = None
-    selected_location = None
+    selected_round = None # ★★★ ラウンド番号もNoneに
 else:
-    # ユーザーには 'OfficialEventName' を見せる
     race_names_list = schedule_df['OfficialEventName'].tolist()
     default_race_name = 'Japanese Grand Prix' if 'Japanese Grand Prix' in race_names_list else race_names_list[0]
     
@@ -51,18 +48,18 @@ else:
         index=race_names_list.index(default_race_name)
     )
     
-    # ★★★ 修正 ★★★ 選択された正式名称から 'Location' をルックアップ
-    selected_location = schedule_df.loc[schedule_df['OfficialEventName'] == selected_race, 'Location'].iloc[0]
+    # ★★★ 修正 ★★★ 選択された正式名称から 'RoundNumber' をルックアップ
+    selected_round = schedule_df.loc[schedule_df['OfficialEventName'] == selected_race, 'RoundNumber'].iloc[0]
 
 
-# 3. ★★★ 修正 ★★★ セッションの動的取得 (引数を 'location' に変更)
+# 3. ★★★ 修正 ★★★ セッションの動的取得 (引数を 'round_number' に変更)
 @st.cache_data
-def get_event_sessions(year, location):
-    if not location:
+def get_event_sessions(year, round_number):
+    if not round_number:
         return []
     try:
-        # 正式名称の代わりに 'Location' (例: 'Suzuka') を使う
-        event = ff1.get_event(year, location) 
+        # 正式名称や地名の代わりに 'RoundNumber' (例: 4) を使う
+        event = ff1.get_event(year, round_number) 
         sessions = list(event.keys())
         
         session_order = {
@@ -77,11 +74,11 @@ def get_event_sessions(year, location):
         return sessions_sorted
 
     except Exception as e:
-        st.sidebar.warning(f"セッション取得エラー (Location: {location}): {e}")
+        st.sidebar.warning(f"セッション取得エラー (Round: {round_number}): {e}")
         return []
 
-# ★★★ 修正 ★★★ 'selected_location' を使って関数を呼び出す
-session_names_list = get_event_sessions(selected_year, selected_location)
+# ★★★ 修正 ★★★ 'selected_round' を使って関数を呼び出す
+session_names_list = get_event_sessions(selected_year, selected_round)
 
 if not session_names_list:
     st.sidebar.warning("このGPのセッション情報が見つかりません。")
@@ -111,7 +108,6 @@ def load_session_data(year, race_name, session_name):
         return None
 
 # --- メイン処理 ---
-# load_session_data には 'selected_race' (OfficialEventName) を渡す
 laps = load_session_data(selected_year, selected_race, selected_session)
 
 if laps is None or laps.empty:
