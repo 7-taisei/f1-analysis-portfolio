@@ -22,48 +22,54 @@ st.sidebar.header("Filter Options ⚙️")
 supported_years = [2024, 2023, 2022]
 selected_year = st.sidebar.selectbox("Select Year:", supported_years)
 
-# 2. レーススケジュールの動的取得
+# 2. ★★★ 修正 ★★★ レーススケジュールの動的取得 (DataFrameを返す)
 @st.cache_data
 def get_race_schedule(year):
     try:
         schedule = ff1.get_event_schedule(year, include_testing=False)
-        race_names = schedule['OfficialEventName'].tolist()
-        return race_names
+        # DataFrame全体を返す
+        return schedule
     except Exception as e:
         st.sidebar.error(f"Error fetching {year} schedule: {e}")
-        return []
+        return pd.DataFrame() # 空のDataFrameを返す
 
-race_names_list = get_race_schedule(selected_year)
-if not race_names_list:
+# スケジュール(DataFrame)を取得
+schedule_df = get_race_schedule(selected_year)
+
+if schedule_df.empty:
     st.sidebar.error(f"{selected_year}年のレースデータが見つかりません。")
     selected_race = None
+    selected_location = None
 else:
+    # ユーザーには 'OfficialEventName' を見せる
+    race_names_list = schedule_df['OfficialEventName'].tolist()
     default_race_name = 'Japanese Grand Prix' if 'Japanese Grand Prix' in race_names_list else race_names_list[0]
+    
     selected_race = st.sidebar.selectbox(
         "Select Race:", 
         race_names_list,
         index=race_names_list.index(default_race_name)
     )
+    
+    # ★★★ 修正 ★★★ 選択された正式名称から 'Location' をルックアップ
+    selected_location = schedule_df.loc[schedule_df['OfficialEventName'] == selected_race, 'Location'].iloc[0]
 
-# 3. ★★★ 修正 ★★★ セッションの動的取得
+
+# 3. ★★★ 修正 ★★★ セッションの動的取得 (引数を 'location' に変更)
 @st.cache_data
-def get_event_sessions(year, race_name):
-    if not race_name:
+def get_event_sessions(year, location):
+    if not location:
         return []
     try:
-        # Event オブジェクトは辞書のように振る舞う
-        event = ff1.get_event(year, race_name) 
-        
-        # 修正点: .keys() を使ってセッション名のリストを取得
+        # 正式名称の代わりに 'Location' (例: 'Suzuka') を使う
+        event = ff1.get_event(year, location) 
         sessions = list(event.keys())
         
-        # 改善点: セッションを論理的な順序（練習→予選→レース）に並び替える
         session_order = {
             'Practice 1': 1, 'Practice 2': 2, 'Practice 3': 3,
             'Sprint Shootout': 4, 'Qualifying': 5,
             'Sprint': 6, 'Race': 7
         }
-        # 既知のセッションのみをフィルタリングし、定義した順序でソート
         sessions_sorted = sorted(
             [s for s in sessions if s in session_order],
             key=lambda s: session_order[s]
@@ -71,10 +77,12 @@ def get_event_sessions(year, race_name):
         return sessions_sorted
 
     except Exception as e:
-        st.sidebar.warning(f"セッション取得エラー: {e}")
+        st.sidebar.warning(f"セッション取得エラー (Location: {location}): {e}")
         return []
 
-session_names_list = get_event_sessions(selected_year, selected_race)
+# ★★★ 修正 ★★★ 'selected_location' を使って関数を呼び出す
+session_names_list = get_event_sessions(selected_year, selected_location)
+
 if not session_names_list:
     st.sidebar.warning("このGPのセッション情報が見つかりません。")
     selected_session = None
@@ -92,8 +100,7 @@ def load_session_data(year, race_name, session_name):
     if not all([year, race_name, session_name]):
         return None
     try:
-        # FastF1は event[session_name] のようにセッション名でアクセスすることもできるが、
-        # get_session の方が汎用的なのでこちらを使い続ける
+        # get_session は 'OfficialEventName' (race_name) でも動作するので、ここは変更不要
         session = ff1.get_session(year, race_name, session_name)
         session.load(laps=True, telemetry=False, weather=False, messages=False)
         laps = session.laps
@@ -104,6 +111,7 @@ def load_session_data(year, race_name, session_name):
         return None
 
 # --- メイン処理 ---
+# load_session_data には 'selected_race' (OfficialEventName) を渡す
 laps = load_session_data(selected_year, selected_race, selected_session)
 
 if laps is None or laps.empty:
@@ -118,7 +126,6 @@ else:
 
     # --- 分析ロジックの分岐 ---
     
-    # セッションが決勝 (Race) または スプリント (Sprint) の場合
     if selected_session in ['Race', 'Sprint']:
         laps_cleaned = laps.pick_accurate() 
         if laps_cleaned.empty:
@@ -153,8 +160,7 @@ else:
                                     xaxis_title="Tyre Life (Laps)", yaxis_title="Lap Time (Seconds)")
                 st.plotly_chart(fig_tyre, use_container_width=True)
 
-    # セッションが予選 (Qualifying) または 練習走行 (Practice) の場合
-    else:
+    else: # 予選・練習走行
         st.info("予選・練習走行セッションです。全ドライバーの最速ラップを表示します。")
         
         try:
