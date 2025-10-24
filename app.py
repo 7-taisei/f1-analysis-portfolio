@@ -8,9 +8,10 @@ st.set_page_config(layout="wide")
 
 # --- タイヤ色の定義 ---
 TYRE_COLORS = {
-    'SOFT': '#dc143c', 'MEDIUM': '#ffd700', 'HARD': "#7eacc7",
+    'SOFT': '#dc143c', 'MEDIUM': '#ffd700', 'HARD': '#f8f8ff',
     'INTERMEDIATE': '#4CAF50', 'WET': '#0D47A1'
 }
+
 # --- アプリのタイトル ---
 st.title("F1 Data Analysis Dashboard 🏎️")
 
@@ -21,7 +22,7 @@ st.sidebar.header("Filter Options ⚙️")
 supported_years = [2024, 2023, 2022]
 selected_year = st.sidebar.selectbox("Select Year:", supported_years)
 
-# 2. レーススケジュールの動的取得 (DataFrameを返す)
+# 2. レーススケジュールの動的取得
 @st.cache_data
 def get_race_schedule(year):
     try:
@@ -36,7 +37,7 @@ schedule_df = get_race_schedule(selected_year)
 if schedule_df.empty:
     st.sidebar.error(f"{selected_year}年のレースデータが見つかりません。")
     selected_race = None
-    selected_round = None # ★★★ ラウンド番号もNoneに
+    selected_round = None
 else:
     race_names_list = schedule_df['OfficialEventName'].tolist()
     default_race_name = 'Japanese Grand Prix' if 'Japanese Grand Prix' in race_names_list else race_names_list[0]
@@ -47,18 +48,30 @@ else:
         index=race_names_list.index(default_race_name)
     )
     
-    # ★★★ 修正 ★★★ 選択された正式名称から 'RoundNumber' をルックアップ
+    # 'RoundNumber' を取得
     selected_round = schedule_df.loc[schedule_df['OfficialEventName'] == selected_race, 'RoundNumber'].iloc[0]
 
 
-# 3. ★★★ 修正 ★★★ セッションの動的取得 (引数を 'round_number' に変更)
+# 3. ★★★ 修正 ★★★ セッションの動的取得 (型変換を追加)
 @st.cache_data
 def get_event_sessions(year, round_number):
+    # (selected_roundがNoneの場合のガード)
     if not round_number:
         return []
+    
+    # ★★★ ここが最重要修正点 ★★★
+    # Pandasから渡された 'round_number' (numpy.int64など) を
+    # Pythonネイティブの 'int' に変換する
     try:
-        # 正式名称や地名の代わりに 'RoundNumber' (例: 4) を使う
-        event = ff1.get_event(year, round_number) 
+        rn_int = int(round_number)
+    except (ValueError, TypeError):
+        st.sidebar.error(f"ラウンド番号 '{round_number}' を数値に変換できません。")
+        return []
+        
+    # --- ここから下は前回と同じ ---
+    try:
+        # 変換した 'rn_int' を使用する
+        event = ff1.get_event(year, rn_int) 
         sessions = list(event.keys())
         
         session_order = {
@@ -73,10 +86,10 @@ def get_event_sessions(year, round_number):
         return sessions_sorted
 
     except Exception as e:
-        st.sidebar.warning(f"セッション取得エラー (Round: {round_number}): {e}")
+        st.sidebar.warning(f"セッション取得エラー (Year: {year}, Round: {rn_int}): {e}")
         return []
 
-# ★★★ 修正 ★★★ 'selected_round' を使って関数を呼び出す
+# 'selected_round' を使って関数を呼び出す
 session_names_list = get_event_sessions(selected_year, selected_round)
 
 if not session_names_list:
@@ -96,7 +109,6 @@ def load_session_data(year, race_name, session_name):
     if not all([year, race_name, session_name]):
         return None
     try:
-        # get_session は 'OfficialEventName' (race_name) でも動作するので、ここは変更不要
         session = ff1.get_session(year, race_name, session_name)
         session.load(laps=True, telemetry=False, weather=False, messages=False)
         laps = session.laps
@@ -166,7 +178,7 @@ else:
             
             st.subheader("Fastest Lap Tyre Compound Distribution")
             fig_pie = px.pie(fastest_laps_summary, names='Compound', 
-                             color='Compound', color_discrete_map=TYRE_COLORS,
+                             color_compound_map=TYRE_COLORS, # (修正: color_discrete_map -> color_compound_map)
                              title="Tyre Compounds used for Fastest Laps")
             st.plotly_chart(fig_pie, use_container_width=True)
 
