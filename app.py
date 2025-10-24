@@ -7,11 +7,11 @@ import plotly.express as px
 st.set_page_config(layout="wide")
 
 # --- ★★★ 新機能 ★★★ タイヤ色の定義 ---
-# FastF1のデータ（'SOFT', 'MEDIUM', 'HARD'）に対応するカラーコード
+# FastF1のデタ（'SOFT', 'MEDIUM', 'HARD'）に対応するカラーコード
 TYRE_COLORS = {
     'SOFT': '#dc143c',    # (Red)
     'MEDIUM': '#ffd700',  # (Yellow)
-    'HARD': '#f8f8ff'     # (White/GhostWhite)
+    'HARD': '#87cefa'     # (White/lightskyblue)
 }
 
 # --- アプリのタイトル ---
