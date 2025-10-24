@@ -11,7 +11,6 @@ TYRE_COLORS = {
     'SOFT': '#dc143c', 'MEDIUM': '#ffd700', 'HARD': "#7eacc7",
     'INTERMEDIATE': '#4CAF50', 'WET': '#0D47A1'
 }
-
 # --- アプリのタイトル ---
 st.title("F1 Data Analysis Dashboard 🏎️")
 
