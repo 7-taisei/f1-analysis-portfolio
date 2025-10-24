@@ -45,16 +45,17 @@ else:
         index=race_names_list.index(default_race_name)
     )
 
-# 3. ★★★ 修正・改善 ★★★ セッションの動的取得
+# 3. ★★★ 修正 ★★★ セッションの動的取得
 @st.cache_data
 def get_event_sessions(year, race_name):
     if not race_name:
         return []
     try:
-        event = ff1.get_event(year, race_name)
+        # Event オブジェクトは辞書のように振る舞う
+        event = ff1.get_event(year, race_name) 
         
-        # 修正点: .sessions ではなく .session_names を使用
-        sessions = event.session_names
+        # 修正点: .keys() を使ってセッション名のリストを取得
+        sessions = list(event.keys())
         
         # 改善点: セッションを論理的な順序（練習→予選→レース）に並び替える
         session_order = {
@@ -70,7 +71,6 @@ def get_event_sessions(year, race_name):
         return sessions_sorted
 
     except Exception as e:
-        # get_eventが失敗した場合など (例: 2022年の'Japanese Grand Prix'は存在しない)
         st.sidebar.warning(f"セッション取得エラー: {e}")
         return []
 
@@ -92,13 +92,15 @@ def load_session_data(year, race_name, session_name):
     if not all([year, race_name, session_name]):
         return None
     try:
+        # FastF1は event[session_name] のようにセッション名でアクセスすることもできるが、
+        # get_session の方が汎用的なのでこちらを使い続ける
         session = ff1.get_session(year, race_name, session_name)
         session.load(laps=True, telemetry=False, weather=False, messages=False)
         laps = session.laps
         return laps
     except Exception as e:
         st.error(f"データ取得エラー: {year} {race_name} '{session_name}' のデータにアクセスできません。")
-        st.error(e)
+        st.error(f"詳細: {e}")
         return None
 
 # --- メイン処理 ---
@@ -156,8 +158,8 @@ else:
         st.info("予選・練習走行セッションです。全ドライバーの最速ラップを表示します。")
         
         try:
-            fastf1_laps = laps.pick_fastest()
-            fastest_laps_summary = fastf1_laps[['Driver', 'LapTime', 'Compound', 'TyreLife', 'Stint']]
+            fastest_laps = laps.pick_fastest()
+            fastest_laps_summary = fastest_laps[['Driver', 'LapTime', 'Compound', 'TyreLife', 'Stint']]
             
             st.dataframe(fastest_laps_summary.set_index('Driver').sort_values('LapTime'), use_container_width=True)
             
