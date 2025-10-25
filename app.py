@@ -273,6 +273,8 @@ with tab1:
 
 
 # --- タブ2 (高度な劣化分析) ---
+# --- タブ2 (高度な劣化分析) ---
+
 with tab2:
     st.header("📈 Advanced Tyre Degradation Analysis")
     if laps is None or results is None or selected_session not in ['Race', 'Sprint', 'S', 'R']:
@@ -282,7 +284,12 @@ with tab2:
         **F1ストラテジスト手法:** 燃料負荷と路面進化のバイアスを補正し、チーム/コンパウンドごとの**真のデグラデーション率**（1周あたり何秒遅くなるか）を線形回帰で計算します。
         """)
         
-        deg_df = calculate_advanced_deg(laps, results)
+        # ★★★ 修正点: キャッシュ関数に渡す前にコピーを作成する ★★★
+        # FastF1のDataFrameはUnhashableな属性を持つため、ハッシュ化可能なコピーを作成
+        laps_cacheable = laps.copy()
+        results_cacheable = results.copy()
+        
+        deg_df = calculate_advanced_deg(laps_cacheable, results_cacheable)
         
         if deg_df.empty:
              st.warning("分析に必要な最低周回数（10周）を満たすクリーンラップがありませんでした。")
@@ -297,8 +304,6 @@ with tab2:
             st.plotly_chart(fig_deg_bar, use_container_width=True)
             st.subheader("Raw Data")
             st.dataframe(deg_df.round(4).set_index(['TeamName', 'Compound']))
-
-
 # --- タブ3 (ピット戦略) ---
 with tab3:
     st.header("🗺️ Pit Strategy Timeline (Gantt Chart)")
