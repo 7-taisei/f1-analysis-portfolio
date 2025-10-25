@@ -247,26 +247,42 @@ with tab1:
             st.error(f"最速ラップの分析中にエラーが発生しました: {e}")
             st.info("データに問題があるか、セッションがロードされていません。")
 
-    # 決勝・スプリント (ロジックは変更なし)
+    # 決勝・スプリント
     elif selected_session in ['Race', 'Sprint', 'S', 'R']:
         st.info("決勝/スプリントセッションです。ドライバーのラップタイムを分析します。")
+        
+        # ★★★ 修正点1: 予測可能なエラー時にDataFrameを返すようにする ★★★
+        driver_laps_final = pd.DataFrame() # 空のDataFrameで初期化
+        
         laps_cleaned = laps.pick_accurate() 
         if laps_cleaned.empty:
             st.warning("分析可能なクリーンラップデータがありません。")
         else:
             laps_cleaned['LapTimeSeconds'] = laps_cleaned['LapTime'].dt.total_seconds()
             drivers = laps_cleaned['Driver'].unique(); drivers.sort()
+            
+            # サイドバーの選択肢が空になるのを避ける (ドライバーリストが空でないことを確認)
+            if not drivers.tolist():
+                st.warning("このセッションには有効なドライバーのラップがありません。")
+                # ここでコードを中断
+                st.stop()
+            
             default_driver = 'TSU' if 'TSU' in drivers else drivers[0]
             selected_driver = st.sidebar.selectbox("Select Driver (for Tab 1):", drivers, index=list(drivers).index(default_driver))
             st.subheader(f"{selected_driver} Lap Time Analysis")
+            
+            # ★★★ 修正点2: pick_driverの結果を driver_laps_final に格納 ★★★
             driver_laps_final = laps_cleaned.pick_driver(selected_driver)
+            
             if not driver_laps_final.empty:
                 fig_driver = px.scatter(driver_laps_final, x='LapNumber', y='LapTimeSeconds', color='Compound',
                                      color_discrete_map=TYRE_COLORS, hover_data=['Stint', 'TyreLife'])
                 fig_driver.update_layout(title=f"{selected_driver} - Lap Times by Lap Number", xaxis_title="Lap Number", yaxis_title="Lap Time (Seconds)")
                 st.plotly_chart(fig_driver, use_container_width=True)
-            else: st.warning(f"{selected_driver}の分析可能なラップがありません。")
-
+            else: 
+                st.warning(f"選択された {selected_driver} のラップデータが見つかりませんでした。")
+                # driver_laps_final は空のDataFrameなので、NameErrorは発生しない
+                
 
 # --- タブ2 (高度な劣化分析) ---
 with tab2:
