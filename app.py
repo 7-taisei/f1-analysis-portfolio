@@ -155,6 +155,8 @@ with tab1:
     if laps is None or laps.empty:
         st.info("サイドバーで分析したい「年」「レース」「セッション」を選択してください。")
     
+    # app.py, Tab 1内の予選ブロック全体を以下のコードで置き換えてください
+
     # ★★★ 予選・練習走行のQxハイライトロジック (文字列ベース) ★★★
     elif selected_session in ['Qualifying', 'Sprint Shootout', 'Q', 'SQ', 'Practice 1', 'Practice 2', 'Practice 3', 'FP1', 'FP2', 'FP3']:
         st.info(f"{selected_session}セッションです。全ドライバーの最速ラップを表示します。")
@@ -176,36 +178,33 @@ with tab1:
                      return f"{seconds:02}.{milliseconds:03}"
 
             # 2. lapsのTimedeltaを全て文字列に変換 (ハイライトのため)
-            quali_laps["LapTime"]=quali_laps["LapTime"].apply(format_time)
-            quali_laps["Sector1Time"]=quali_laps["Sector1Time"].apply(format_time)
-            quali_laps["Sector2Time"]=quali_laps["Sector2Time"].apply(format_time)
-            quali_laps["Sector3Time"]=quali_laps["Sector3Time"].apply(format_time)
+            # ※この変換は、後のハイライト関数（文字列比較）に必要な処理です
+            quali_laps_str = quali_laps.copy()
+            for col in ["LapTime", "Sector1Time", "Sector2Time", "Sector3Time"]:
+                 if col in quali_laps_str.columns:
+                      quali_laps_str[col] = quali_laps_str[col].apply(format_time)
+
             
             # 3. resultsのTimedeltaを全て文字列に変換
             segments = ['Q1', 'Q2', 'Q3']
-            
             if not all(seg in quali_results.columns for seg in segments):
                 st.error("エラー: Q1/Q2/Q3の公式タイムが見つかりません。")
                 st.stop()
                  
-            quali_results["Q1"]=quali_results["Q1"].apply(format_time)
-            quali_results["Q2"]=quali_results["Q2"].apply(format_time)
-            quali_results["Q3"]=quali_results["Q3"].apply(format_time)
+            # 4. Qxベストタイムの文字列リストを作成 (ハイライト比較用)
+            def create_formatted_time_list(col: str) -> List[str]:
+                 # タイムをフォーマットし、NaNや空文字列を除外
+                 return [format_time(td) for td in quali_results[col].dropna() if pd.notna(td)]
 
-            # 4. Qxベストタイムの文字列リストを作成 (重複なし)
-            q1_laptimes = quali_results["Q1"].dropna().tolist()
-            q2_laptimes = quali_results["Q2"].dropna().tolist()
-            q3_laptimes = quali_results["Q3"].dropna().tolist()
+            q1_laptimes = create_formatted_time_list('Q1')
+            q2_laptimes = create_formatted_time_list('Q2')
+            q3_laptimes = create_formatted_time_list('Q3')
             
-            def filtered(lst: List[str]) -> List[str]:
-                 return [x for x in lst if x!=""]
-
-            q1_laptimes=filtered(q1_laptimes)
-            q2_laptimes=filtered(q2_laptimes)
-            q3_laptimes=filtered(q3_laptimes)
             
             # 5. ハイライト関数 (文字列比較)
             def highlight_q1_q2_q3(row: pd.Series) -> List[str]:
+                # row は既に文字列化されたデータを持つ (LapTime, Sector1Time...を含む)
+                # Q3 > Q2 > Q1 の優先度
                 if row["LapTime"] in q3_laptimes:
                     return ['background-color: #ffc0cb; color: black'] * len(row)
                 elif row["LapTime"] in q2_laptimes:
@@ -216,58 +215,38 @@ with tab1:
                     return [''] * len(row)
 
             # 6. 表示用DataFrameの作成 (全ドライバーの最速ラップ)
-            fastest_laps_source = laps.pick_fastest()
+            fastest_laps = laps.pick_fastest()
             
-            # ★★★ 修正点1: LapオブジェクトをDataFrameに変換 ★★★
-            if isinstance(fastest_laps_source, pd.Series) or not isinstance(fastest_laps_source, pd.DataFrame):
-                # 単一のLapオブジェクトやSeriesの場合、DataFrameに変換
-                fastest_laps = pd.DataFrame([fastest_laps_source])
+            # ★★★ 修正点1: pick_fastestの結果をDataFrameに変換 ★★★
+            if isinstance(fastest_laps, pd.Series) or not isinstance(fastest_laps, pd.DataFrame):
+                fastest_laps_df = pd.DataFrame([fastest_laps])
             else:
-                fastest_laps = fastest_laps_source
-            # ★★★ 修正点終了 ★★★
+                fastest_laps_df = fastest_laps
             
-            if fastest_laps.empty:
+            if fastest_laps_df.empty:
                 st.warning("最速ラップデータが見つかりませんでした。")
                 st.stop()
 
-            # ここで quali_laps (文字列化されたもの) を使って merge する必要があるため、
-            # fastest_laps に LapTimeStrings をマージする
+            # ★★★ 修正点2: 表示用DFに文字列化されたLapTimeを紐付ける ★★★
+            # (fastest_laps_dfはTimedelta型、quali_laps_strは文字列型)
             
-            # 必要な列だけを抽出（Driver, LapTimeなど）
-            fastest_laps_source = fastest_laps[['Driver', 'LapStartTime']].copy() # LapStartTimeでソートし、Driverをキーに
-
-            # fastest_laps (DataFrame) と quali_laps (文字列化済み) をマージ
-            # 最も安全な方法: fastest_laps_source のインデックスを利用して quali_laps から値をコピーする
-            
-            # 簡略化: fastest_laps の LapTime も文字列化する
-            # ※ safest way is to pick_fastest AFTER string conversion, but that is complex.
-
-            # display_df を作成
-            display_df = pd.merge(
-                fastest_laps_source,
-                quali_results[['Abbreviation', 'TeamColor', 'Q1', 'Q2', 'Q3']], # Merge Qx times too
-                left_on='Driver', right_on='Abbreviation', how='left'
-            ).drop(columns=['Abbreviation'])
-            
-            # display_df にセクタータイムがないため、元の quali_laps から引っ張ってくる必要がある
-            
-            # Simplest path: Use fastest_laps (DataFrame) directly, and assign strings
-            display_df = fastest_laps.copy()
-            
-            # fastest_laps_source の文字列化されたタイムを display_df にアサイン
-            display_df['LapTime'] = quali_laps.loc[display_df.index, 'LapTime']
-            display_df['Sector1Time'] = quali_laps.loc[display_df.index, 'Sector1Time']
-            display_df['Sector2Time'] = quali_laps.loc[display_df.index, 'Sector2Time']
-            display_df['Sector3Time'] = quali_laps.loc[display_df.index, 'Sector3Time']
+            # Fastest Laps (Timedelta) と Fastest Laps (String) をマージする
+            display_df_source = pd.merge(
+                fastest_laps_df[['Driver', 'LapNumber']], # マージキー
+                quali_laps_str[['Driver', 'LapNumber', 'LapTime', 'Sector1Time', 'Sector2Time', 'Sector3Time', 'Compound', 'TyreLife']], # 文字列化されたデータ
+                on=['Driver', 'LapNumber'],
+                how='left'
+            )
 
             # TeamColor のマージ
             display_df = pd.merge(
-                display_df, quali_results[['Abbreviation', 'TeamColor']], 
+                display_df_source,
+                quali_results[['Abbreviation', 'TeamColor']], 
                 left_on='Driver', right_on='Abbreviation', how='left'
-            ).drop(columns=['Abbreviation']).rename(columns={'Driver': 'Abbreviation'}).sort_values(by='LapStartTime').reset_index(drop=True)
+            ).drop(columns=['Abbreviation']).rename(columns={'Driver': 'Abbreviation'})
 
-            # 最終的な表示DFの列を選択
-            display_df = display_df[['Abbreviation', 'LapTime', 'Sector1Time', 'Sector2Time', 'Sector3Time', 'Compound', 'TyreLife', 'TeamColor']]
+            # 最終的な表示DFの列を選択し、LapTimeでソート
+            display_df = display_df.rename(columns={'Driver': 'Abbreviation'}).sort_values(by='LapTime').reset_index(drop=True)
 
 
             # 7. スタイル適用
@@ -316,7 +295,7 @@ with tab2:
         **F1ストラテジスト手法:** 燃料負荷と路面進化のバイアスを補正し、チーム/コンパウンドごとの**真のデグラデーション率**（1周あたり何秒遅くなるか）を線形回帰で計算します。
         """)
         
-        # ★★★ キャッシュなしで直接呼び出し ★★★
+        # キャッシュなしで直接呼び出し
         if st.button("Run Advanced Degradation Analysis"):
             with st.spinner("高度な補正と回帰モデルを実行中..."):
                 try:
