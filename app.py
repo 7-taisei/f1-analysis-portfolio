@@ -6,7 +6,6 @@ import numpy as np
 import re 
 from typing import List, Any 
 from fastf1.core import SessionResults 
-import plotly.express as px
 
 # --- ページ設定 ---
 st.set_page_config(layout="wide")
@@ -185,10 +184,10 @@ with tab1:
             # 3. resultsのTimedeltaを全て文字列に変換
             segments = ['Q1', 'Q2', 'Q3']
             
-            # ★★★ 修正点1: エラー時に st.stop() で安全に停止 ★★★
+            # ★★★ 修正点1: エラー回避: 必要な列がない場合は st.error で中断 ★★★
             if not all(seg in quali_results.columns for seg in segments):
                 st.error("エラー: Q1/Q2/Q3の公式タイムが見つかりません。")
-                st.stop() # アプリの実行を安全に停止
+                st.stop()
                  
             quali_results["Q1"]=quali_results["Q1"].apply(format_time)
             quali_results["Q2"]=quali_results["Q2"].apply(format_time)
