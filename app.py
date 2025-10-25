@@ -7,6 +7,7 @@ import re
 from typing import List, Any 
 from fastf1.core import SessionResults 
 import plotly.express as px
+from fastf1.core import Lap # Lapオブジェクトの型チェックのためにインポート (ただし、ここではPandas型チェックで代用)
 
 # --- ページ設定 ---
 st.set_page_config(layout="wide")
@@ -89,23 +90,13 @@ def load_session_data(year, race_name, session_name):
 laps, results = load_session_data(selected_year, selected_race, selected_session)
 
 
-# --- Deg 分析のためのヘルパー関数 (キャッシュを削除し、引数をPandas DataFrameに限定) ---
-# ★★★ @st.cache_data を削除 ★★★
-def calculate_advanced_deg(laps_df: pd.DataFrame, results_df: pd.DataFrame):
+# --- Deg 分析のためのヘルパー関数 (変更なし) ---
+def calculate_advanced_deg(laps_df, results_df):
     from sklearn.linear_model import LinearRegression
     STARTING_FUEL_KG = 110.0
     FUEL_BURN_RATE_KG_PER_LAP = 1.6
     FUEL_EFFECT_SEC_PER_KG = 0.03
     TRACK_EVO_EFFECT_SEC_PER_LAP = 0.01
-
-    # LapsがFastF1のLapsオブジェクトの場合、Pandasに変換
-    if not isinstance(laps_df, pd.DataFrame):
-         laps_df = pd.DataFrame(laps_df.to_dict()) # 最も安全な変換方法
-         # Timedeltaを復元
-         for col in ['LapTime', 'PitOutTime', 'PitInTime', 'Sector1Time', 'Sector2Time', 'Sector3Time', 'Time']:
-            if col in laps_df.columns:
-                laps_df[col] = pd.to_timedelta(laps_df[col])
-
 
     laps_with_team = pd.merge(
         laps_df, results_df[['Abbreviation', 'TeamName']], 
@@ -165,19 +156,99 @@ with tab1:
     if laps is None or laps.empty:
         st.info("サイドバーで分析したい「年」「レース」「セッション」を選択してください。")
     
-    # 予選・練習走行
+    # ★★★ 予選・練習走行のQxハイライトロジック (文字列ベース) ★★★
     elif selected_session in ['Qualifying', 'Sprint Shootout', 'Q', 'SQ', 'Practice 1', 'Practice 2', 'Practice 3', 'FP1', 'FP2', 'FP3']:
         st.info(f"{selected_session}セッションです。全ドライバーの最速ラップを表示します。")
         try:
-            # (Qxハイライトロジックは煩雑なため、シンプルな最速ラップ表示に戻します)
-            fastest_laps = laps.pick_fastest()
-            fastest_laps_summary = fastest_laps[['Driver', 'LapTime', 'Compound', 'TyreLife', 'Stint']]
-            st.dataframe(fastest_laps_summary.set_index('Driver').sort_values('LapTime'), use_container_width=True)
+            # 1. データの整形とTimedeltaの文字列化
+            quali_laps = laps.copy()
+            quali_results = results.copy()
+            
+            # タイムフォーマット関数 (Timedelta -> 'MM:SS.mmm' or 'SS.mmm')
+            def format_time(td: pd.Timedelta) -> str:
+                if pd.isna(td): return ""
+                total_seconds=td.total_seconds()
+                minutes=int(total_seconds//60)
+                seconds = int(total_seconds % 60)
+                milliseconds = int((total_seconds - int(total_seconds)) * 1000)
+                if total_seconds >= 60:
+                     return f"{minutes:02}:{seconds:02}.{milliseconds:03}"
+                else:
+                     return f"{seconds:02}.{milliseconds:03}"
+
+            # 2. lapsのTimedeltaを全て文字列に変換 (ハイライトのため)
+            quali_laps["LapTime"]=quali_laps["LapTime"].apply(format_time)
+            quali_laps["Sector1Time"]=quali_laps["Sector1Time"].apply(format_time)
+            quali_laps["Sector2Time"]=quali_laps["Sector2Time"].apply(format_time)
+            quali_laps["Sector3Time"]=quali_laps["Sector3Time"].apply(format_time)
+            
+            # 3. resultsのTimedeltaを全て文字列に変換
+            segments = ['Q1', 'Q2', 'Q3']
+            
+            if not all(seg in quali_results.columns for seg in segments):
+                st.error("エラー: Q1/Q2/Q3の公式タイムが見つかりません。")
+                st.stop()
+                 
+            quali_results["Q1"]=quali_results["Q1"].apply(format_time)
+            quali_results["Q2"]=quali_results["Q2"].apply(format_time)
+            quali_results["Q3"]=quali_results["Q3"].apply(format_time)
+
+            # 4. Qxベストタイムの文字列リストを作成 (重複なし)
+            q1_laptimes = quali_results["Q1"].dropna().tolist()
+            q2_laptimes = quali_results["Q2"].dropna().tolist()
+            q3_laptimes = quali_results["Q3"].dropna().tolist()
+            
+            def filtered(lst: List[str]) -> List[str]:
+                 return [x for x in lst if x!=""]
+
+            q1_laptimes=filtered(q1_laptimes)
+            q2_laptimes=filtered(q2_laptimes)
+            q3_laptimes=filtered(q3_laptimes)
+            
+            # 5. ハイライト関数 (文字列比較)
+            def highlight_q1_q2_q3(row: pd.Series) -> List[str]:
+                if row["LapTime"] in q3_laptimes:
+                    return ['background-color: #ffc0cb; color: black'] * len(row)
+                elif row["LapTime"] in q2_laptimes:
+                    return ['background-color: #add8e6; color: black'] * len(row)
+                elif row["LapTime"] in q1_laptimes:
+                    return ['background-color: #d0f0c0; color: black'] * len(row)
+                else:
+                    return [''] * len(row)
+
+            # 6. 表示用DataFrameの作成 (全ドライバーの最速ラップ)
+            fastest_laps_source = laps.pick_fastest()
+            
+            if fastest_laps_source.empty:
+                st.warning("最速ラップデータが見つかりませんでした。")
+                st.stop()
+
+            fastest_laps_source = fastest_laps_source.sort_values(by='LapStartTime').copy()
+            
+            # Timedeltaが文字列化されたDataFrameをマージして作成
+            display_df = pd.merge(
+                fastest_laps_source[['Driver', 'LapTime', 'Sector1Time', 'Sector2Time', 'Sector3Time', 'Compound', 'TyreLife']],
+                quali_results[['Abbreviation', 'TeamColor']], 
+                left_on='Driver', right_on='Abbreviation', how='left'
+            ).drop(columns=['Abbreviation'])
+            
+            display_df = display_df.rename(columns={'Driver': 'Abbreviation'}).sort_values(by='LapTime').reset_index(drop=True)
+
+
+            # 7. スタイル適用
+            styled_df = display_df.style\
+                .apply(highlight_q1_q2_q3, axis=1)\
+                .hide(axis='index')
+            
+            st.dataframe(styled_df, use_container_width=True)
+
         except Exception as e:
             st.error(f"最速ラップの分析中にエラーが発生しました: {e}")
+            st.info("データに問題があるか、セッションがロードされていません。")
 
-    # 決勝・スプリント
+    # 決勝・スプリント (ロジックは変更なし)
     elif selected_session in ['Race', 'Sprint', 'S', 'R']:
+        driver_laps_final = pd.DataFrame() # NameError対策
         st.info("決勝/スプリントセッションです。ドライバーのラップタイムを分析します。")
         laps_cleaned = laps.pick_accurate() 
         if laps_cleaned.empty:
@@ -188,6 +259,7 @@ with tab1:
             default_driver = 'TSU' if 'TSU' in drivers else drivers[0]
             selected_driver = st.sidebar.selectbox("Select Driver (for Tab 1):", drivers, index=list(drivers).index(default_driver))
             st.subheader(f"{selected_driver} Lap Time Analysis")
+            
             driver_laps_final = laps_cleaned.pick_driver(selected_driver)
             
             if not driver_laps_final.empty:
@@ -208,12 +280,11 @@ with tab2:
         **F1ストラテジスト手法:** 燃料負荷と路面進化のバイアスを補正し、チーム/コンパウンドごとの**真のデグラデーション率**（1周あたり何秒遅くなるか）を線形回帰で計算します。
         """)
         
-        # ★★★ 修正点1: 実行ボタンの追加 ★★★
+        # ★★★ キャッシュなしで直接呼び出し ★★★
         if st.button("Run Advanced Degradation Analysis"):
             with st.spinner("高度な補正と回帰モデルを実行中..."):
                 try:
-                    # ★★★ 修正点2: キャッシュなしで直接関数を呼び出す ★★★
-                    # (UnhashableTypeErrorを避けるため、ここでは@st.cache_dataを使用しない)
+                    # UnhashableTypeErrorを避けるため、ここでは@st.cache_dataを使用しない
                     deg_df = calculate_advanced_deg(laps, results)
                     
                     if deg_df.empty:
@@ -232,11 +303,9 @@ with tab2:
                 except Exception as e:
                     st.error(f"分析の実行中にエラーが発生しました: {e}")
                     st.error("Trace: " + str(e))
-        else:
-            st.info("分析を実行するには、上のボタンを押してください。")
 
 
-# --- タブ3 (ピット戦略 - 変更なし) ---
+# --- タブ3 (ピット戦略) ---
 with tab3:
     st.header("🗺️ Pit Strategy Timeline (Gantt Chart)")
     if laps is None or results is None or selected_session not in ['Race', 'Sprint', 'S', 'R']:
@@ -259,7 +328,7 @@ with tab3:
             st.error(f"ガントチャートの描画中にエラーが発生しました: {e}")
 
 
-# --- タブ4 (H2H ペース比較 - 変更なし) ---
+# --- タブ4 (H2H ペース比較) ---
 with tab4:
     st.header("⚔️ Head-to-Head (H2H) Pace Comparison")
     
