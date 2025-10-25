@@ -274,7 +274,6 @@ with tab1:
 
 # --- タブ2 (高度な劣化分析) ---
 # --- タブ2 (高度な劣化分析) ---
-
 with tab2:
     st.header("📈 Advanced Tyre Degradation Analysis")
     if laps is None or results is None or selected_session not in ['Race', 'Sprint', 'S', 'R']:
@@ -284,12 +283,21 @@ with tab2:
         **F1ストラテジスト手法:** 燃料負荷と路面進化のバイアスを補正し、チーム/コンパウンドごとの**真のデグラデーション率**（1周あたり何秒遅くなるか）を線形回帰で計算します。
         """)
         
-        # ★★★ 修正点: キャッシュ関数に渡す前にコピーを作成する ★★★
-        # FastF1のDataFrameはUnhashableな属性を持つため、ハッシュ化可能なコピーを作成
-        laps_cacheable = laps.copy()
-        results_cacheable = results.copy()
+        # ★★★ 修正点: キャッシュ関数に渡す前にデータ構造を完全にリセット ★★★
+        # (1) Lapsをリセット: CSVを経由するのと同じ効果でハッシュ化できない属性を削除
+        laps_clean = pd.DataFrame(laps.to_dict()) 
         
-        deg_df = calculate_advanced_deg(laps_cacheable, results_cacheable)
+        # (2) Resultsをリセット: 構造がシンプルなので copy() で十分
+        results_clean = results.copy() 
+        
+        # 必要なTimedelta型を復元（FastF1のTimedeltaは内部で再生成されるため）
+        # LapTimeやPitInTimeなど、Timedelta型として期待される列を復元する
+        timedelta_cols = ['Time', 'LapTime', 'PitOutTime', 'PitInTime', 'Sector1Time', 'Sector2Time', 'Sector3Time']
+        for col in [c for c in timedelta_cols if c in laps_clean.columns]:
+            laps_clean[col] = pd.to_timedelta(laps_clean[col])
+
+
+        deg_df = calculate_advanced_deg(laps_clean, results_clean)
         
         if deg_df.empty:
              st.warning("分析に必要な最低周回数（10周）を満たすクリーンラップがありませんでした。")
