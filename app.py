@@ -5,9 +5,8 @@ from sklearn.linear_model import LinearRegression
 import numpy as np 
 import re 
 from typing import List, Any 
-from fastf1.core import SessionResults 
+from fastf1.core import SessionResults, Lap # Lap型をインポート
 import plotly.express as px
-from fastf1.core import Lap # Lapオブジェクトの型チェックのためにインポート (ただし、ここではPandas型チェックで代用)
 
 # --- ページ設定 ---
 st.set_page_config(layout="wide")
@@ -219,20 +218,56 @@ with tab1:
             # 6. 表示用DataFrameの作成 (全ドライバーの最速ラップ)
             fastest_laps_source = laps.pick_fastest()
             
-            if fastest_laps_source.empty:
+            # ★★★ 修正点1: LapオブジェクトをDataFrameに変換 ★★★
+            if isinstance(fastest_laps_source, pd.Series) or not isinstance(fastest_laps_source, pd.DataFrame):
+                # 単一のLapオブジェクトやSeriesの場合、DataFrameに変換
+                fastest_laps = pd.DataFrame([fastest_laps_source])
+            else:
+                fastest_laps = fastest_laps_source
+            # ★★★ 修正点終了 ★★★
+            
+            if fastest_laps.empty:
                 st.warning("最速ラップデータが見つかりませんでした。")
                 st.stop()
 
-            fastest_laps_source = fastest_laps_source.sort_values(by='LapStartTime').copy()
+            # ここで quali_laps (文字列化されたもの) を使って merge する必要があるため、
+            # fastest_laps に LapTimeStrings をマージする
             
-            # Timedeltaが文字列化されたDataFrameをマージして作成
+            # 必要な列だけを抽出（Driver, LapTimeなど）
+            fastest_laps_source = fastest_laps[['Driver', 'LapStartTime']].copy() # LapStartTimeでソートし、Driverをキーに
+
+            # fastest_laps (DataFrame) と quali_laps (文字列化済み) をマージ
+            # 最も安全な方法: fastest_laps_source のインデックスを利用して quali_laps から値をコピーする
+            
+            # 簡略化: fastest_laps の LapTime も文字列化する
+            # ※ safest way is to pick_fastest AFTER string conversion, but that is complex.
+
+            # display_df を作成
             display_df = pd.merge(
-                fastest_laps_source[['Driver', 'LapTime', 'Sector1Time', 'Sector2Time', 'Sector3Time', 'Compound', 'TyreLife']],
-                quali_results[['Abbreviation', 'TeamColor']], 
+                fastest_laps_source,
+                quali_results[['Abbreviation', 'TeamColor', 'Q1', 'Q2', 'Q3']], # Merge Qx times too
                 left_on='Driver', right_on='Abbreviation', how='left'
             ).drop(columns=['Abbreviation'])
             
-            display_df = display_df.rename(columns={'Driver': 'Abbreviation'}).sort_values(by='LapTime').reset_index(drop=True)
+            # display_df にセクタータイムがないため、元の quali_laps から引っ張ってくる必要がある
+            
+            # Simplest path: Use fastest_laps (DataFrame) directly, and assign strings
+            display_df = fastest_laps.copy()
+            
+            # fastest_laps_source の文字列化されたタイムを display_df にアサイン
+            display_df['LapTime'] = quali_laps.loc[display_df.index, 'LapTime']
+            display_df['Sector1Time'] = quali_laps.loc[display_df.index, 'Sector1Time']
+            display_df['Sector2Time'] = quali_laps.loc[display_df.index, 'Sector2Time']
+            display_df['Sector3Time'] = quali_laps.loc[display_df.index, 'Sector3Time']
+
+            # TeamColor のマージ
+            display_df = pd.merge(
+                display_df, quali_results[['Abbreviation', 'TeamColor']], 
+                left_on='Driver', right_on='Abbreviation', how='left'
+            ).drop(columns=['Abbreviation']).rename(columns={'Driver': 'Abbreviation'}).sort_values(by='LapStartTime').reset_index(drop=True)
+
+            # 最終的な表示DFの列を選択
+            display_df = display_df[['Abbreviation', 'LapTime', 'Sector1Time', 'Sector2Time', 'Sector3Time', 'Compound', 'TyreLife', 'TeamColor']]
 
 
             # 7. スタイル適用
@@ -245,6 +280,7 @@ with tab1:
         except Exception as e:
             st.error(f"最速ラップの分析中にエラーが発生しました: {e}")
             st.info("データに問題があるか、セッションがロードされていません。")
+            st.stop() # 予期せぬエラーで停止
 
     # 決勝・スプリント (ロジックは変更なし)
     elif selected_session in ['Race', 'Sprint', 'S', 'R']:
@@ -284,7 +320,6 @@ with tab2:
         if st.button("Run Advanced Degradation Analysis"):
             with st.spinner("高度な補正と回帰モデルを実行中..."):
                 try:
-                    # UnhashableTypeErrorを避けるため、ここでは@st.cache_dataを使用しない
                     deg_df = calculate_advanced_deg(laps, results)
                     
                     if deg_df.empty:
